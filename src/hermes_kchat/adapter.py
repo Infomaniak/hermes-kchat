@@ -50,6 +50,25 @@ _RECONNECT_JITTER = 0.2
 _DEFAULT_WS_HOST = "websocket.kchat.infomaniak.com"
 
 
+def _extract_transcript_text(data: Any) -> str:
+    """Pull the transcript text out of a kChat transcript response.
+
+    kChat's transcript object looks like
+    ``{"task": "transcribe", "language": "…", "text": " …", "segments": [...]}``.
+    Handle the object directly, a ``{"transcript": {...}}`` wrapper, and a bare
+    ``{"transcript": "…"}``. An empty/not-ready transcript yields ``""``.
+    """
+    if isinstance(data, dict):
+        candidate = data.get("transcript", data)
+        if isinstance(candidate, dict) and isinstance(candidate.get("text"), str):
+            return candidate["text"].strip()
+        if isinstance(candidate, str):
+            return candidate.strip()
+        if isinstance(data.get("text"), str):
+            return data["text"].strip()
+    return ""
+
+
 def check_kchat_requirements() -> bool:
     """Return True if the kChat adapter can be used."""
     token = os.getenv("KCHAT_TOKEN", "")
@@ -379,25 +398,43 @@ class KChatAdapter(BasePlatformAdapter):
             logger.debug("kChat: ignoring own message (post=%s)", post.get("id"))
             return
 
-        # Ignore system posts.
-        if post.get("type"):
-            logger.debug("kChat: ignoring system post type=%s", post.get("type"))
+        post_type = post.get("type", "")
+        if post_type and post_type != "voice":
+            logger.debug("kChat: ignoring post type=%s", post_type)
             return
+        is_voice = post_type == "voice"
 
         post_id = post.get("id", "")
         if self._dedup.is_duplicate(post_id):
             logger.debug("kChat: ignoring duplicate post=%s", post_id)
             return
-        logger.info(
-            "kChat: inbound post id=%s channel_type=%s text=%r",
-            post_id, data.get("channel_type"), str(post.get("message", ""))[:80],
-        )
 
         channel_id = post.get("channel_id", "")
         channel_type_raw = data.get("channel_type", "O")
         chat_type = _CHANNEL_TYPE_MAP.get(channel_type_raw, "channel")
 
         message_text = post.get("message", "")
+
+        meta_files = (post.get("metadata") or {}).get("files") or []
+        file_ids = list(post.get("file_ids") or [])
+        for _mf in meta_files:
+            _fid = _mf.get("id")
+            if _fid and _fid not in file_ids:
+                file_ids.append(_fid)
+
+        if is_voice and not message_text:
+            voice_fid = next(
+                (mf.get("id") for mf in meta_files
+                 if str(mf.get("mime_type", "")).startswith("audio")),
+                file_ids[0] if file_ids else None,
+            )
+            if voice_fid:
+                message_text = await self._fetch_voice_transcript(voice_fid)
+
+        logger.info(
+            "kChat: inbound post id=%s channel_type=%s voice=%s text=%r",
+            post_id, channel_type_raw, is_voice, message_text[:80],
+        )
 
         # Mention-gating for non-DM channels (env-driven).
         if channel_type_raw != "D":
@@ -439,7 +476,6 @@ class KChatAdapter(BasePlatformAdapter):
         sender_name = data.get("sender_name", "").lstrip("@") or sender_id
         thread_id = post.get("root_id") or None
 
-        file_ids = post.get("file_ids") or []
         msg_type = MessageType.TEXT
         if message_text.startswith("/"):
             msg_type = MessageType.COMMAND
@@ -490,6 +526,8 @@ class KChatAdapter(BasePlatformAdapter):
                 msg_type = MessageType.VOICE
             elif media_types:
                 msg_type = MessageType.DOCUMENT
+        if is_voice:
+            msg_type = MessageType.VOICE
 
         source = self.build_source(
             chat_id=channel_id,
@@ -518,6 +556,38 @@ class KChatAdapter(BasePlatformAdapter):
             channel_id, chat_type, sender_id, msg_type,
         )
         await self.handle_message(msg_event)
+
+    async def _fetch_voice_transcript(
+        self, file_id: str, attempts: int = 4, delay: float = 1.2
+    ) -> str:
+        """Fetch a kChat voice transcript via POST /files/{id}/transcript.
+
+        kChat transcribes voice messages asynchronously, so the transcript can
+        be empty for a second or two after the voice post arrives — retry
+        briefly. Returns the transcript text, or "" if unavailable (the audio
+        is still delivered, so the agent can transcribe it as a fallback).
+        """
+        import aiohttp
+        url = f"{self._base_url}/api/v4/files/{file_id}/transcript"
+        for attempt in range(attempts):
+            try:
+                async with self._session.post(
+                    url, headers=self._headers(),
+                    timeout=aiohttp.ClientTimeout(total=30), **self._req_kw,
+                ) as resp:
+                    if resp.status < 400:
+                        text = _extract_transcript_text(await resp.json())
+                        if text:
+                            logger.info("kChat: voice transcript (%d chars)", len(text))
+                            return text
+                    else:
+                        logger.debug("kChat: transcript HTTP %s for file %s", resp.status, file_id)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                logger.debug("kChat: transcript fetch error for %s: %s", file_id, exc)
+            if attempt < attempts - 1:
+                await asyncio.sleep(delay)
+        logger.info("kChat: no transcript available for voice file %s", file_id)
+        return ""
 
     async def _upload_file(
         self, channel_id: str, file_data: bytes, filename: str,

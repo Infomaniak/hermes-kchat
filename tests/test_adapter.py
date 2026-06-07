@@ -303,3 +303,63 @@ class TestKChatThreading:
         a._session.post = MagicMock(return_value=resp)
         await a.send("c", "hi")
         assert a._session.post.call_args[1]["proxy"] == "http://px:8080"
+
+
+class TestKChatVoice:
+    """Voice messages: kChat tags them type='voice' with an async transcript."""
+
+    def setup_method(self):
+        self.a = _make_adapter()
+        self.a._bot_user_id = "bot_id"
+        self.a._bot_username = "hermes-bot"
+        self.a.handle_message = AsyncMock()
+
+    def _voice_event(self, channel_type="D"):
+        post = {
+            "id": "v1", "user_id": "u2", "channel_id": "c_dm", "type": "voice",
+            "message": "",
+            "metadata": {"files": [
+                {"id": "f_audio", "mime_type": "audio/mpeg", "name": "voice.mp3"}
+            ]},
+        }
+        return {"event": "posted",
+                "data": {"post": post, "channel_type": channel_type, "sender_name": "@bob"}}
+
+    @pytest.mark.asyncio
+    async def test_voice_dispatched_with_transcript(self):
+        self.a._fetch_voice_transcript = AsyncMock(return_value="hello from voice")
+        await self.a._handle_ws_event(self._voice_event())
+        # audio file id is pulled from metadata.files (file_ids was empty)
+        self.a._fetch_voice_transcript.assert_awaited_once_with("f_audio")
+        self.a.handle_message.assert_called_once()
+        ev = self.a.handle_message.call_args[0][0]
+        assert ev.text == "hello from voice"
+        assert ev.message_type.value == "voice"
+        assert ev.message_id == "v1"
+        assert ev.source.chat_type == "dm"
+
+    @pytest.mark.asyncio
+    async def test_voice_without_transcript_still_dispatched(self):
+        self.a._fetch_voice_transcript = AsyncMock(return_value="")
+        await self.a._handle_ws_event(self._voice_event())
+        self.a.handle_message.assert_called_once()
+        ev = self.a.handle_message.call_args[0][0]
+        assert ev.message_type.value == "voice"
+        assert ev.text == ""
+
+    @pytest.mark.asyncio
+    async def test_system_post_still_ignored(self):
+        post = {"id": "s1", "user_id": "u2", "channel_id": "c", "type": "system_join_channel"}
+        event = {"event": "posted", "data": {"post": post, "channel_type": "O"}}
+        await self.a._handle_ws_event(event)
+        assert not self.a.handle_message.called
+
+
+def test_extract_transcript_text():
+    from hermes_kchat.adapter import _extract_transcript_text
+    assert _extract_transcript_text({"text": " Test."}) == "Test."
+    assert _extract_transcript_text({"transcript": {"text": " hi "}}) == "hi"
+    assert _extract_transcript_text({"transcript": "yo"}) == "yo"
+    assert _extract_transcript_text({"transcript": []}) == ""   # not-ready (empty list)
+    assert _extract_transcript_text({}) == ""
+    assert _extract_transcript_text("nope") == ""
