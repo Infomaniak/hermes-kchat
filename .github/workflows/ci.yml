@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint (ruff, error-level only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      # Minimal "stop on real errors" set: syntax errors + undefined names.
+      # Keeps the gate free of style noise (the repo has no ruff config).
+      - run: ruff check . --select E9,F63,F7,F82
+
+  pusher-tests:
+    # The Pusher protocol client has zero hermes-agent dependency, so its
+    # tests run on every supported Python with just aiohttp. This is the
+    # novel, highest-risk code — verified across versions here.
+    name: pusher tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/test_pusher.py -v
+
+  full-suite:
+    # The adapter + standalone tests import the hermes-agent host packages
+    # (gateway.*, hermes_cli.*). Install hermes-agent so they run for real
+    # instead of being importorskip-skipped.
+    name: full suite (with hermes-agent host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install hermes-agent (the host)
+        # Tracks upstream main. Pin to a tag/SHA here for fully reproducible
+        # runs, e.g. "...hermes-agent.git@v0.16.0", if upstream main churns.
+        run: pip install "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git"
+      - name: Sanity-check host import (fail loudly if the host didn't install)
+        run: python -c "import gateway.platforms.base, gateway.platform_registry, hermes_cli.plugins; print('hermes-agent host OK')"
+      - run: pip install -e ".[dev]"
+      - name: Run the full test suite (adapter tests execute, not skip)
+        run: pytest -v
+
+  build:
+    name: build + packaging checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - name: Wheel must ship plugin.yaml + the kchat entry point
+        run: |
+          python - <<'PY'
+          import glob, zipfile
+          whl = glob.glob("dist/*.whl")[0]
+          zf = zipfile.ZipFile(whl)
+          names = zf.namelist()
+          assert any(n.endswith("hermes_kchat/plugin.yaml") for n in names), "plugin.yaml missing from wheel"
+          assert any(n.endswith("hermes_kchat/adapter.py") for n in names), "adapter.py missing"
+          assert any(n.endswith("hermes_kchat/pusher.py") for n in names), "pusher.py missing"
+          ep = [n for n in names if n.endswith("entry_points.txt")]
+          assert ep, "entry_points.txt missing from wheel"
+          content = zf.read(ep[0]).decode()
+          assert "hermes_agent.plugins" in content and "kchat" in content, content
+          print("packaging OK:", whl)
+          PY

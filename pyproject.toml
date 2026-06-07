@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-kchat"
+version = "0.1.0"
+description = "Infomaniak kChat platform adapter for Hermes Agent"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Leopold Jacquot" }]
+# aiohttp is provided by hermes-agent at runtime; declared so the package is
+# installable standalone. hermes-agent itself (the `gateway`/`hermes_cli`
+# packages) is the host and is NOT a pip dependency — it must be present in
+# the runtime environment.
+dependencies = ["aiohttp>=3.8"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+# This is what makes hermes-agent discover the plugin. The entry-point NAME
+# (`kchat`) becomes the platform key the user enables.
+[project.entry-points."hermes_agent.plugins"]
+kchat = "hermes_kchat"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Ship plugin.yaml + README inside the wheel (directory-discovery + metadata).
+[tool.setuptools.package-data]
+hermes_kchat = ["plugin.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

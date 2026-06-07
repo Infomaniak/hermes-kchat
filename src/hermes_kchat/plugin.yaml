@@ -1,0 +1,56 @@
+name: kchat
+label: kChat
+kind: platform
+version: 0.1.0
+description: >
+  Infomaniak kChat gateway adapter for Hermes Agent. Relaying
+  messages between kChat channels/DMs and the Hermes agent. Supports thread
+  replies, native file uploads, channel allowlists, and home-channel cron
+  delivery.
+author: Leopold Jacquot
+requires_env:
+  - name: KCHAT_URL
+    description: "kChat server URL (e.g. https://org.kchat.infomaniak.com)"
+    prompt: "kChat server URL"
+    password: false
+  - name: KCHAT_TOKEN
+    description: "Bot account token"
+    prompt: "kChat bot token"
+    password: true
+optional_env:
+  - name: KCHAT_WEBSOCKET_URL
+    description: "Pusher websocket host (default websocket.kchat.infomaniak.com)"
+    prompt: "kChat websocket host"
+    password: false
+  - name: KCHAT_PROXY
+    description: "Proxy URL for kChat REST + websocket traffic (falls back to HTTPS_PROXY/ALL_PROXY/system proxy). SOCKS requires aiohttp_socks."
+    prompt: "Proxy URL (empty for none)"
+    password: false
+  - name: KCHAT_ALLOWED_USERS
+    description: "Comma-separated kChat user IDs allowed to talk to the bot"
+    prompt: "Allowed users (comma-separated)"
+    password: false
+  - name: KCHAT_ALLOW_ALL_USERS
+    description: "Allow any kChat user to trigger the bot (dev only)"
+    prompt: "Allow all users? (true/false)"
+    password: false
+  - name: KCHAT_HOME_CHANNEL
+    description: "Default channel ID for cron / notification delivery"
+    prompt: "Home channel ID"
+    password: false
+  - name: KCHAT_REPLY_MODE
+    description: "How replies are sent: 'thread' (nested) or 'off' (flat). Default off."
+    prompt: "Reply mode (thread|off)"
+    password: false
+  - name: KCHAT_REQUIRE_MENTION
+    description: "Require @bot mention in channels (default true)."
+    prompt: "Require @mention? (true/false)"
+    password: false
+  - name: KCHAT_FREE_RESPONSE_CHANNELS
+    description: "Comma-separated channel IDs where @mention is not required."
+    prompt: "Free-response channel IDs (comma-separated)"
+    password: false
+  - name: KCHAT_ALLOWED_CHANNELS
+    description: "If set, the bot only responds in these channels (whitelist)."
+    prompt: "Allowed channel IDs (comma-separated)"
+    password: false
