@@ -17,15 +17,16 @@ def _register_kchat_platform():
     try:
         from gateway.platform_registry import platform_registry, PlatformEntry
     except Exception:
-        return  # hermes-agent not installed; adapter tests will importorskip
-    if not platform_registry.is_registered("kchat"):
-        platform_registry.register(
-            PlatformEntry(
-                name="kchat",
-                label="kChat",
-                adapter_factory=lambda config: None,
-                check_fn=lambda: True,
-                source="plugin",
+        yield  # hermes-agent not installed; adapter tests will importorskip
+    else:
+        if not platform_registry.is_registered("kchat"):
+            platform_registry.register(
+                PlatformEntry(
+                    name="kchat",
+                    label="kChat",
+                    adapter_factory=lambda config: None,
+                    check_fn=lambda: True,
+                    source="plugin",
+                )
             )
-        )
-    yield
+        yield
