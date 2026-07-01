@@ -264,7 +264,7 @@ class KChatAdapter(BasePlatformAdapter):
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def connect(self) -> bool:
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
         import aiohttp
 
         if not self._base_url or not self._token:
