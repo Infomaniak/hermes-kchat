@@ -32,6 +32,34 @@ from gateway.platforms.base import (
 from .pusher import PusherClient, PusherPermanentError
 import aiohttp  # module-level so tests can patch hermes_kchat.adapter.aiohttp
 
+
+def _profile_env(name: str, default: str = "") -> str:
+    """Read a kChat setting from the active Hermes profile.
+
+    The multiplexed gateway serves every profile from one process, so
+    os.environ only holds the default profile's .env. get_secret_str reads
+    the .env of the profile being served.
+
+    Two cases fall back to os.environ:
+    - Hermes versions without agent.secret_scope (single profile per
+      process, as before);
+    - UnscopedSecretError: Hermes 0.21 builds and probes the default
+      profile's adapter outside any profile scope, and os.environ holds
+      exactly that profile's .env. Secondary profiles are always built
+      inside their scope, and the gateway refuses to start a secondary
+      adapter holding another profile's token, so this fallback cannot
+      hand one profile another profile's credentials.
+    """
+    try:
+        from agent.secret_scope import UnscopedSecretError, get_secret_str
+    except ImportError:
+        return os.getenv(name, default)
+    try:
+        return get_secret_str(name, default)
+    except UnscopedSecretError:
+        return os.getenv(name, default)
+
+
 logger = logging.getLogger(__name__)
 
 MAX_POST_LENGTH = 4000
@@ -71,8 +99,8 @@ def _extract_transcript_text(data: Any) -> str:
 
 def check_kchat_requirements() -> bool:
     """Return True if the kChat adapter can be used."""
-    token = os.getenv("KCHAT_TOKEN", "")
-    url = os.getenv("KCHAT_URL", "")
+    token = _profile_env("KCHAT_TOKEN", "")
+    url = _profile_env("KCHAT_URL", "")
     if not token:
         logger.debug("kChat: KCHAT_TOKEN not set")
         return False
@@ -94,12 +122,12 @@ class KChatAdapter(BasePlatformAdapter):
         super().__init__(config, Platform("kchat"))
 
         self._base_url: str = (
-            config.extra.get("url", "") or os.getenv("KCHAT_URL", "")
+            config.extra.get("url", "") or _profile_env("KCHAT_URL", "")
         ).rstrip("/")
-        self._token: str = config.token or os.getenv("KCHAT_TOKEN", "")
+        self._token: str = config.token or _profile_env("KCHAT_TOKEN", "")
         self._websocket_url: str = (
             config.extra.get("websocket_url", "")
-            or os.getenv("KCHAT_WEBSOCKET_URL", "")
+            or _profile_env("KCHAT_WEBSOCKET_URL", "")
             or _DEFAULT_WS_HOST
         )
 
@@ -114,7 +142,7 @@ class KChatAdapter(BasePlatformAdapter):
         self._closing = False
 
         self._reply_mode: str = (
-            config.extra.get("reply_mode", "") or os.getenv("KCHAT_REPLY_MODE", "off")
+            config.extra.get("reply_mode", "") or _profile_env("KCHAT_REPLY_MODE", "off")
         ).lower()
 
         self._dedup = MessageDeduplicator()
@@ -440,7 +468,7 @@ class KChatAdapter(BasePlatformAdapter):
         if channel_type_raw != "D":
             allowed_raw = self.config.extra.get("allowed_channels") if self.config.extra else None
             if allowed_raw is None:
-                allowed_raw = os.getenv("KCHAT_ALLOWED_CHANNELS", "")
+                allowed_raw = _profile_env("KCHAT_ALLOWED_CHANNELS", "")
             if isinstance(allowed_raw, list):
                 allowed_channels = {str(c).strip() for c in allowed_raw if str(c).strip()}
             else:
@@ -449,10 +477,10 @@ class KChatAdapter(BasePlatformAdapter):
                 logger.debug("kChat: ignoring message in non-allowed channel: %s", channel_id)
                 return
 
-            require_mention = os.getenv("KCHAT_REQUIRE_MENTION", "true").lower() not in {
+            require_mention = _profile_env("KCHAT_REQUIRE_MENTION", "true").lower() not in {
                 "false", "0", "no"
             }
-            free_channels_raw = os.getenv("KCHAT_FREE_RESPONSE_CHANNELS", "")
+            free_channels_raw = _profile_env("KCHAT_FREE_RESPONSE_CHANNELS", "")
             free_channels = {ch.strip() for ch in free_channels_raw.split(",") if ch.strip()}
             is_free_channel = channel_id in free_channels
 
@@ -830,9 +858,9 @@ async def _standalone_send(
     force_document: bool = False,
 ) -> Dict[str, Any]:
     base_url = (
-        (getattr(pconfig, "extra", {}) or {}).get("url") or os.getenv("KCHAT_URL", "")
+        (getattr(pconfig, "extra", {}) or {}).get("url") or _profile_env("KCHAT_URL", "")
     ).rstrip("/")
-    token = (getattr(pconfig, "token", None) or os.getenv("KCHAT_TOKEN", "")).strip()
+    token = (getattr(pconfig, "token", None) or _profile_env("KCHAT_TOKEN", "")).strip()
     if not base_url or not token:
         return {"error": "kChat standalone send: KCHAT_URL and KCHAT_TOKEN must both be set"}
 
@@ -953,15 +981,15 @@ def interactive_setup() -> None:
 
 def _apply_yaml_config(yaml_cfg: dict, kchat_cfg: dict) -> "dict | None":
     """Translate config.yaml `kchat:` keys into KCHAT_* env vars (env wins)."""
-    if "require_mention" in kchat_cfg and not os.getenv("KCHAT_REQUIRE_MENTION"):
+    if "require_mention" in kchat_cfg and not _profile_env("KCHAT_REQUIRE_MENTION"):
         os.environ["KCHAT_REQUIRE_MENTION"] = str(kchat_cfg["require_mention"]).lower()
     frc = kchat_cfg.get("free_response_channels")
-    if frc is not None and not os.getenv("KCHAT_FREE_RESPONSE_CHANNELS"):
+    if frc is not None and not _profile_env("KCHAT_FREE_RESPONSE_CHANNELS"):
         if isinstance(frc, list):
             frc = ",".join(str(v) for v in frc)
         os.environ["KCHAT_FREE_RESPONSE_CHANNELS"] = str(frc)
     ac = kchat_cfg.get("allowed_channels")
-    if ac is not None and not os.getenv("KCHAT_ALLOWED_CHANNELS"):
+    if ac is not None and not _profile_env("KCHAT_ALLOWED_CHANNELS"):
         if isinstance(ac, list):
             ac = ",".join(str(v) for v in ac)
         os.environ["KCHAT_ALLOWED_CHANNELS"] = str(ac)
