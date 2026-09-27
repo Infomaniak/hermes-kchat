@@ -55,12 +55,17 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          # Upstream hermes-agent only ships runtime deps for py3.14 (older
+          # versions install dep-free, for legacy updater paths).
+          python-version: "3.14"
           cache: pip
       - name: Install hermes-agent (the host)
-        # Tracks upstream main. Pin to a tag/SHA here for fully reproducible
-        # runs, e.g. "...hermes-agent.git@v0.16.0", if upstream main churns.
-        run: pip install "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git"
+        # Editable install: upstream setup.py refuses wheel/sdist builds
+        # (RuntimeError unless HERMES_NIX_BUILD=1), but build_editable never
+        # runs bdist_wheel, so -e is the sanctioned pip path. Clones into
+        # ./src/hermes-agent. Tracks upstream main; pin to a tag/SHA here for
+        # fully reproducible runs if upstream main churns.
+        run: pip install -e "git+https://github.com/NousResearch/hermes-agent.git#egg=hermes-agent"
       - name: Sanity-check host import (fail loudly if the host didn't install)
         run: python -c "import gateway.platforms.base, gateway.platform_registry, hermes_cli.plugins; print('hermes-agent host OK')"
       - run: pip install -e ".[dev]"
