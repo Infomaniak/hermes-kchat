@@ -752,6 +752,7 @@ class KChatAdapter(BasePlatformAdapter):
 
         CHUNK = 5
         chunks = [images[i:i + CHUNK] for i in range(0, len(images), CHUNK)]
+        root_id = await self._thread_root(None, metadata)
 
         for chunk_idx, chunk in enumerate(chunks):
             if human_delay > 0 and chunk_idx > 0:
@@ -803,6 +804,8 @@ class KChatAdapter(BasePlatformAdapter):
                 payload: Dict[str, Any] = {
                     "channel_id": chat_id, "message": "\n".join(caption_parts), "file_ids": file_ids,
                 }
+                if root_id:
+                    payload["root_id"] = root_id
                 logger.info("kChat: sending %d image(s) as single post (chunk %d/%d)",
                             len(file_ids), chunk_idx + 1, len(chunks))
                 data = await self._api_post("posts", payload)

@@ -363,3 +363,37 @@ def test_extract_transcript_text():
     assert _extract_transcript_text({"transcript": []}) == ""   # not-ready (empty list)
     assert _extract_transcript_text({}) == ""
     assert _extract_transcript_text("nope") == ""
+
+
+
+class TestKChatMultipleImagesThread:
+    def _adapter_with_fakes(self, tmp_path):
+        a = _make_adapter()
+        posts = []
+
+        async def fake_upload(chat_id, data, fname, ct):
+            return "file-1"
+
+        async def fake_post(endpoint, payload):
+            posts.append(payload)
+            return {"id": "post-1"}
+
+        async def fake_root(post_id):
+            return post_id
+
+        a._upload_file = fake_upload
+        a._api_post = fake_post
+        a._resolve_root_id = fake_root
+        image = tmp_path / "koala.png"
+        image.write_bytes(b"png")
+        return a, posts, f"file://{image}"
+
+    def test_batched_images_stay_in_thread(self, tmp_path):
+        a, posts, url = self._adapter_with_fakes(tmp_path)
+        asyncio.run(a.send_multiple_images("chan-1", [(url, "")], metadata={"thread_id": "root-42"}))
+        assert posts and posts[0]["root_id"] == "root-42"
+
+    def test_batched_images_without_thread_go_to_channel(self, tmp_path):
+        a, posts, url = self._adapter_with_fakes(tmp_path)
+        asyncio.run(a.send_multiple_images("chan-1", [(url, "")], metadata=None))
+        assert posts and "root_id" not in posts[0]
