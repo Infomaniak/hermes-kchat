@@ -4,10 +4,7 @@ Infomaniak **kChat** platform adapter for [Hermes Agent](https://github.com/Nous
 
 ## Requirements
 
-Requires a hermes-agent with the **platform-plugin system** (`ctx.register_platform`
-/ `gateway.platform_registry`) — present in current hermes (verified on
-**v0.16.0**). Older builds (e.g. 0.10.0) predate it and have no plugin way to add
-a messaging platform; upgrade hermes first.
+Requires hermes-agent>=0.22.5
 
 ## Install (directory plugin — the supported path)
 
@@ -63,7 +60,10 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 # pusher.py tests run with only aiohttp:
 pytest tests/test_pusher.py -v
-# adapter/standalone tests need hermes-agent on PYTHONPATH (they importorskip otherwise):
-#   pip install -e /path/to/hermes-agent
+# adapter/standalone tests need the hermes-agent host (they importorskip otherwise).
+# vendor/ holds a gitignored checkout — fetch and pin it yourself:
+git clone https://github.com/NousResearch/hermes-agent vendor/hermes-agent
+git -C vendor/hermes-agent checkout v0.22.5
+pip install -e vendor/hermes-agent   # re-run after changing the checkout: refreshes the editable finder
 pytest -v
 ```
