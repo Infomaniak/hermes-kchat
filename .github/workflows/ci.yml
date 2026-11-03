@@ -60,17 +60,23 @@ jobs:
           python-version: "3.14"
           cache: pip
       - name: Install hermes-agent (the host)
-        # Editable install: upstream setup.py refuses wheel/sdist builds
-        # (RuntimeError unless HERMES_NIX_BUILD=1), but build_editable never
-        # runs bdist_wheel, so -e is the sanctioned pip path. Clones into
-        # ./src/hermes-agent. Tracks upstream main; pin to a tag/SHA here for
-        # fully reproducible runs if upstream main churns.
-        run: pip install -e "git+https://github.com/NousResearch/hermes-agent.git#egg=hermes-agent"
+        # Sync upstream's own resolution: on py3.14 upstream's declared set is
+        # unsatisfiable with pip (Pillow==13.0.0 in the host vs browser-harness
+        # 0.1.13's pillow==12.3.0) and upstream escapes through [tool.uv]
+        # override-dependencies recorded in its committed uv.lock. `uv sync
+        # --frozen` installs exactly that locked set — the plugin never
+        # mirrors an override of its own. The host lands editable in the
+        # clone's .venv; later steps point at that interpreter explicitly.
+        run: |
+          pip install uv
+          git clone --depth 1 https://github.com/NousResearch/hermes-agent.git src/hermes-agent
+          uv sync --frozen --directory src/hermes-agent --python 3.14
       - name: Sanity-check host import (fail loudly if the host didn't install)
-        run: python -c "import gateway.platforms.base, gateway.platform_registry, hermes_cli.plugins; print('hermes-agent host OK')"
-      - run: pip install -e ".[dev]"
+        run: src/hermes-agent/.venv/bin/python -c "import gateway.platforms.base, gateway.platform_registry, hermes_cli.plugins; print('hermes-agent host OK')"
+      - name: Install the plugin (editable) and test deps into the host env
+        run: uv pip install --python src/hermes-agent/.venv/bin/python -e ".[dev]"
       - name: Run the full test suite (adapter tests execute, not skip)
-        run: pytest -v
+        run: src/hermes-agent/.venv/bin/python -m pytest -v
 
   build:
     name: build + packaging checks
