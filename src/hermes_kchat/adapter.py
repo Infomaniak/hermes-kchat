@@ -503,6 +503,7 @@ class KChatAdapter(BasePlatformAdapter):
         sender_id = post.get("user_id", "")
         sender_name = data.get("sender_name", "").lstrip("@") or sender_id
         thread_id = post.get("root_id") or None
+        reply_ctx = await self._reply_context(thread_id, post_id)
 
         msg_type = MessageType.TEXT
         if message_text.startswith("/"):
@@ -577,6 +578,7 @@ class KChatAdapter(BasePlatformAdapter):
             media_urls=media_urls if media_urls else None,
             media_types=media_types if media_types else None,
             channel_prompt=_channel_prompt,
+            **reply_ctx,
         )
 
         logger.debug(
@@ -584,6 +586,30 @@ class KChatAdapter(BasePlatformAdapter):
             channel_id, chat_type, sender_id, msg_type,
         )
         await self.handle_message(msg_event)
+
+    async def _reply_context(self, root_id: Optional[str], post_id: str) -> Dict[str, Any]:
+        """Reply-to fields for a post inside a thread.
+
+        A thread reply only carries ``root_id``. Each thread is its own session,
+        so without the root post the agent sees e.g. "send it again" with no
+        idea what "it" is — typically when the root is a notification delivered
+        by ``hermes send`` or a cron job. Fetch the root post so the gateway can
+        prepend ``[Replying to: "..."]``. Returns {} when there is nothing to add
+        or the fetch fails (the message is still delivered, as before).
+        """
+        if not root_id or root_id == post_id:
+            return {}
+        root = await self._api_get(f"posts/{root_id}")
+        text = (root.get("message") or "").strip() if root else ""
+        if not text:
+            return {}
+        author = root.get("user_id") or None
+        return {
+            "reply_to_message_id": root_id,
+            "reply_to_text": text,
+            "reply_to_author_id": author,
+            "reply_to_is_own_message": bool(author) and author == self._bot_user_id,
+        }
 
     async def _fetch_voice_transcript(
         self, file_id: str, attempts: int = 4, delay: float = 1.2

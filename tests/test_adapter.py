@@ -182,6 +182,54 @@ class TestKChatHandleEvent:
         await self.a._handle_ws_event(self._posted(post, channel_type="D"))
         assert self.a.handle_message.call_count == 1
 
+    @pytest.mark.asyncio
+    async def test_thread_reply_carries_root_post(self):
+        # Replying in the thread of a bot notification: the agent must see it.
+        self.a._api_get = AsyncMock(return_value={
+            "id": "root1", "user_id": "bot_id", "message": "Your card expires on 05-11"})
+        post = {"id": "p6", "user_id": "u2", "channel_id": "c_dm",
+                "message": "renew it", "root_id": "root1"}
+        await self.a._handle_ws_event(self._posted(post, channel_type="D"))
+        self.a._api_get.assert_awaited_once_with("posts/root1")
+        ev = self.a.handle_message.call_args[0][0]
+        assert ev.text == "renew it"
+        assert ev.source.thread_id == "root1"
+        assert ev.reply_to_message_id == "root1"
+        assert ev.reply_to_text == "Your card expires on 05-11"
+        assert ev.reply_to_author_id == "bot_id"
+        assert ev.reply_to_is_own_message is True
+
+    @pytest.mark.asyncio
+    async def test_thread_reply_to_other_user_not_own(self):
+        self.a._api_get = AsyncMock(return_value={
+            "id": "root2", "user_id": "u3", "message": "lunch?"})
+        post = {"id": "p7", "user_id": "u2", "channel_id": "c_dm",
+                "message": "yes", "root_id": "root2"}
+        await self.a._handle_ws_event(self._posted(post, channel_type="D"))
+        ev = self.a.handle_message.call_args[0][0]
+        assert ev.reply_to_text == "lunch?"
+        assert ev.reply_to_is_own_message is False
+
+    @pytest.mark.asyncio
+    async def test_root_fetch_failure_still_delivers(self):
+        # _api_get returns {} on HTTP/network errors: deliver without context.
+        self.a._api_get = AsyncMock(return_value={})
+        post = {"id": "p8", "user_id": "u2", "channel_id": "c_dm",
+                "message": "hi", "root_id": "gone"}
+        await self.a._handle_ws_event(self._posted(post, channel_type="D"))
+        ev = self.a.handle_message.call_args[0][0]
+        assert ev.text == "hi"
+        assert ev.reply_to_message_id is None
+        assert ev.reply_to_text is None
+
+    @pytest.mark.asyncio
+    async def test_top_level_post_makes_no_fetch(self):
+        self.a._api_get = AsyncMock()
+        post = {"id": "p9", "user_id": "u2", "channel_id": "c_dm", "message": "hi"}
+        await self.a._handle_ws_event(self._posted(post, channel_type="D"))
+        self.a._api_get.assert_not_called()
+        assert self.a.handle_message.call_args[0][0].reply_to_text is None
+
 
 class TestKChatSend:
     def setup_method(self):
